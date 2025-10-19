@@ -47,10 +47,10 @@ const Index = () => {
   }, []);
 
   useEffect(() => {
-    if (user) {
+    if (user && activeTab === 'history') {
       loadTransactions();
     }
-  }, [user]);
+  }, [user, activeTab]);
 
   const handleLogin = async () => {
     try {
@@ -70,7 +70,7 @@ const Index = () => {
         toast({ title: 'Ошибка', description: data.error, variant: 'destructive' });
       }
     } catch (error) {
-      toast({ title: 'Ошибка соединения', variant: 'destructive' });
+      toast({ title: 'Ошибка соединения', description: 'Не удалось подключиться к серверу', variant: 'destructive' });
     }
   };
 
@@ -92,7 +92,7 @@ const Index = () => {
         toast({ title: 'Ошибка', description: data.error, variant: 'destructive' });
       }
     } catch (error) {
-      toast({ title: 'Ошибка соединения', variant: 'destructive' });
+      toast({ title: 'Ошибка соединения', description: 'Не удалось подключиться к серверу', variant: 'destructive' });
     }
   };
 
@@ -100,47 +100,75 @@ const Index = () => {
     if (!user) return;
     try {
       const res = await fetch(`${API_TRANSACTIONS}?user_id=${user.id}`);
+      if (!res.ok) throw new Error('Failed to fetch');
+      
       const data = await res.json();
       setTransactions(data.transactions || []);
       
       const balanceRes = await fetch(`${API_BALANCE}?user_id=${user.id}`);
-      const balanceData = await balanceRes.json();
-      if (balanceData.balance !== undefined) {
-        const updatedUser = { ...user, balance: balanceData.balance };
-        setUser(updatedUser);
-        localStorage.setItem('bank_user', JSON.stringify(updatedUser));
+      if (balanceRes.ok) {
+        const balanceData = await balanceRes.json();
+        if (balanceData.balance !== undefined) {
+          const updatedUser = { ...user, balance: balanceData.balance };
+          setUser(updatedUser);
+          localStorage.setItem('bank_user', JSON.stringify(updatedUser));
+        }
       }
     } catch (error) {
-      console.error('Failed to load transactions');
+      console.error('Failed to load transactions:', error);
+      toast({ title: 'Ошибка', description: 'Не удалось загрузить историю', variant: 'destructive' });
     }
   };
 
   const handleTransfer = async () => {
     if (!user) return;
+    
+    const amount = parseFloat(transferForm.amount);
+    if (isNaN(amount) || amount <= 0) {
+      toast({ title: 'Ошибка', description: 'Введите корректную сумму', variant: 'destructive' });
+      return;
+    }
+    
+    if (!transferForm.to_username.trim()) {
+      toast({ title: 'Ошибка', description: 'Введите имя получателя', variant: 'destructive' });
+      return;
+    }
+    
     try {
       const res = await fetch(API_TRANSACTIONS, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           from_user_id: user.id,
-          to_username: transferForm.to_username,
-          amount: parseFloat(transferForm.amount),
+          to_username: transferForm.to_username.trim(),
+          amount: amount,
           description: transferForm.description || 'Перевод',
         }),
       });
+      
+      if (!res.ok) {
+        const errorData = await res.json();
+        toast({ title: 'Ошибка', description: errorData.error || 'Ошибка перевода', variant: 'destructive' });
+        return;
+      }
+      
       const data = await res.json();
       
       if (data.success) {
-        setUser({ ...user, balance: data.new_balance });
-        localStorage.setItem('bank_user', JSON.stringify({ ...user, balance: data.new_balance }));
-        toast({ title: 'Успешно!', description: `Переведено ${transferForm.amount} ₽` });
+        const updatedUser = { ...user, balance: data.new_balance };
+        setUser(updatedUser);
+        localStorage.setItem('bank_user', JSON.stringify(updatedUser));
+        toast({ title: 'Успешно!', description: `Переведено ${amount} ₽` });
         setTransferForm({ to_username: '', amount: '', description: '' });
-        loadTransactions();
+        if (activeTab === 'history') {
+          loadTransactions();
+        }
       } else {
         toast({ title: 'Ошибка', description: data.error, variant: 'destructive' });
       }
     } catch (error) {
-      toast({ title: 'Ошибка соединения', variant: 'destructive' });
+      console.error('Transfer error:', error);
+      toast({ title: 'Ошибка соединения', description: 'Не удалось выполнить перевод', variant: 'destructive' });
     }
   };
 
@@ -153,14 +181,14 @@ const Index = () => {
 
   if (!user) {
     return (
-      <div className="min-h-screen bg-gradient-to-br from-slate-50 to-slate-100 flex items-center justify-center p-4">
-        <Card className="w-full max-w-md shadow-2xl border-slate-200">
+      <div className="min-h-screen bg-gradient-to-br from-blue-50 to-indigo-100 flex items-center justify-center p-4">
+        <Card className="w-full max-w-md shadow-2xl border-blue-200">
           <CardHeader className="space-y-2 text-center pb-8">
-            <div className="mx-auto w-16 h-16 bg-primary rounded-full flex items-center justify-center mb-4">
-              <Icon name="Building2" className="text-primary-foreground" size={32} />
+            <div className="mx-auto w-16 h-16 bg-blue-600 rounded-full flex items-center justify-center mb-4">
+              <Icon name="Building2" className="text-white" size={32} />
             </div>
-            <CardTitle className="text-3xl font-bold">Безопасный Банк</CardTitle>
-            <CardDescription className="text-base">Надёжность • Защита • Удобство</CardDescription>
+            <CardTitle className="text-3xl font-bold text-blue-900">Рублёвый Банк</CardTitle>
+            <CardDescription className="text-base">Ваши виртуальные рубли в безопасности</CardDescription>
           </CardHeader>
           <CardContent>
             <Tabs defaultValue="login" className="w-full">
@@ -177,6 +205,7 @@ const Index = () => {
                     value={loginForm.username}
                     onChange={(e) => setLoginForm({ ...loginForm, username: e.target.value })}
                     placeholder="ivan_petrov"
+                    onKeyDown={(e) => e.key === 'Enter' && handleLogin()}
                   />
                 </div>
                 <div className="space-y-2">
@@ -187,6 +216,7 @@ const Index = () => {
                     value={loginForm.password}
                     onChange={(e) => setLoginForm({ ...loginForm, password: e.target.value })}
                     placeholder="••••••"
+                    onKeyDown={(e) => e.key === 'Enter' && handleLogin()}
                   />
                 </div>
                 <Button onClick={handleLogin} className="w-full mt-6 h-11" size="lg">
@@ -229,11 +259,8 @@ const Index = () => {
                 </div>
                 <Button onClick={handleRegister} className="w-full mt-6 h-11" size="lg">
                   <Icon name="UserPlus" size={18} className="mr-2" />
-                  Создать аккаунт
+                  Зарегистрироваться
                 </Button>
-                <p className="text-xs text-muted-foreground text-center mt-4">
-                  Стартовый баланс: 10 000 ₽
-                </p>
               </TabsContent>
             </Tabs>
           </CardContent>
@@ -243,101 +270,52 @@ const Index = () => {
   }
 
   return (
-    <div className="min-h-screen bg-gradient-to-br from-slate-50 to-slate-100">
-      <div className="border-b bg-white shadow-sm">
-        <div className="container mx-auto px-4 py-4 flex items-center justify-between">
-          <div className="flex items-center gap-3">
-            <div className="w-10 h-10 bg-primary rounded-full flex items-center justify-center">
-              <Icon name="Building2" className="text-primary-foreground" size={20} />
+    <div className="min-h-screen bg-gradient-to-br from-blue-50 to-indigo-100 p-4">
+      <div className="max-w-4xl mx-auto">
+        <Card className="mb-6 border-blue-200 shadow-xl">
+          <CardHeader className="bg-gradient-to-r from-blue-600 to-indigo-600 text-white rounded-t-lg">
+            <div className="flex justify-between items-center">
+              <div>
+                <CardTitle className="text-2xl mb-1">{user.full_name}</CardTitle>
+                <CardDescription className="text-blue-100">@{user.username}</CardDescription>
+              </div>
+              <Button onClick={handleLogout} variant="secondary" size="sm">
+                <Icon name="LogOut" size={16} className="mr-2" />
+                Выйти
+              </Button>
             </div>
-            <h1 className="text-xl font-bold">Безопасный Банк</h1>
-          </div>
-          <div className="flex items-center gap-4">
-            <div className="text-right">
-              <p className="text-sm text-muted-foreground">Баланс</p>
-              <p className="text-2xl font-bold text-accent">{user.balance.toLocaleString('ru-RU')} ₽</p>
+          </CardHeader>
+          <CardContent className="pt-6">
+            <div className="text-center">
+              <p className="text-sm text-muted-foreground mb-2">Баланс</p>
+              <p className="text-5xl font-bold text-blue-900">{user.balance.toLocaleString('ru-RU')} ₽</p>
             </div>
-            <Button variant="outline" size="icon" onClick={handleLogout}>
-              <Icon name="LogOut" size={18} />
-            </Button>
-          </div>
-        </div>
-      </div>
+          </CardContent>
+        </Card>
 
-      <div className="container mx-auto px-4 py-8">
         <Tabs value={activeTab} onValueChange={setActiveTab} className="w-full">
-          <TabsList className="grid w-full grid-cols-4 mb-8 bg-white shadow-sm">
-            <TabsTrigger value="home" className="gap-2">
-              <Icon name="Home" size={16} />
-              Главная
-            </TabsTrigger>
-            <TabsTrigger value="transfer" className="gap-2">
-              <Icon name="Send" size={16} />
-              Перевод
-            </TabsTrigger>
-            <TabsTrigger value="history" className="gap-2">
-              <Icon name="History" size={16} />
-              История
-            </TabsTrigger>
-            <TabsTrigger value="profile" className="gap-2">
-              <Icon name="User" size={16} />
-              Профиль
-            </TabsTrigger>
+          <TabsList className="grid w-full grid-cols-2 mb-6">
+            <TabsTrigger value="home">Перевод</TabsTrigger>
+            <TabsTrigger value="history">История</TabsTrigger>
           </TabsList>
 
-          <TabsContent value="home" className="space-y-6">
-            <Card className="shadow-lg">
-              <CardHeader>
-                <CardTitle className="flex items-center gap-2">
-                  <Icon name="Wallet" size={24} />
-                  Ваш баланс
-                </CardTitle>
-              </CardHeader>
-              <CardContent>
-                <p className="text-5xl font-bold text-accent mb-2">{user.balance.toLocaleString('ru-RU')} ₽</p>
-                <p className="text-muted-foreground">Виртуальная валюта</p>
-              </CardContent>
-            </Card>
-
-            <div className="grid md:grid-cols-3 gap-4">
-              <Card className="shadow-md hover:shadow-lg transition-shadow cursor-pointer" onClick={() => setActiveTab('transfer')}>
-                <CardContent className="pt-6 text-center">
-                  <Icon name="ArrowUpRight" size={32} className="mx-auto mb-3 text-primary" />
-                  <p className="font-semibold">Отправить деньги</p>
-                </CardContent>
-              </Card>
-              <Card className="shadow-md hover:shadow-lg transition-shadow cursor-pointer" onClick={() => setActiveTab('history')}>
-                <CardContent className="pt-6 text-center">
-                  <Icon name="Receipt" size={32} className="mx-auto mb-3 text-primary" />
-                  <p className="font-semibold">Просмотр истории</p>
-                </CardContent>
-              </Card>
-              <Card className="shadow-md hover:shadow-lg transition-shadow cursor-pointer" onClick={() => setActiveTab('profile')}>
-                <CardContent className="pt-6 text-center">
-                  <Icon name="Settings" size={32} className="mx-auto mb-3 text-primary" />
-                  <p className="font-semibold">Настройки</p>
-                </CardContent>
-              </Card>
-            </div>
-          </TabsContent>
-
-          <TabsContent value="transfer" className="space-y-6">
-            <Card className="shadow-lg max-w-2xl mx-auto">
+          <TabsContent value="home">
+            <Card className="border-blue-200">
               <CardHeader>
                 <CardTitle className="flex items-center gap-2">
                   <Icon name="Send" size={24} />
                   Перевод средств
                 </CardTitle>
-                <CardDescription>Отправьте деньги другому пользователю</CardDescription>
+                <CardDescription>Переведите деньги другому пользователю</CardDescription>
               </CardHeader>
               <CardContent className="space-y-4">
                 <div className="space-y-2">
-                  <Label htmlFor="to-username">Получатель (username)</Label>
+                  <Label htmlFor="to_username">Имя получателя</Label>
                   <Input
-                    id="to-username"
+                    id="to_username"
                     value={transferForm.to_username}
                     onChange={(e) => setTransferForm({ ...transferForm, to_username: e.target.value })}
-                    placeholder="maria_ivanova"
+                    placeholder="username123"
                   />
                 </div>
                 <div className="space-y-2">
@@ -348,101 +326,84 @@ const Index = () => {
                     value={transferForm.amount}
                     onChange={(e) => setTransferForm({ ...transferForm, amount: e.target.value })}
                     placeholder="1000"
+                    min="0"
+                    step="0.01"
                   />
                 </div>
                 <div className="space-y-2">
-                  <Label htmlFor="description">Назначение платежа</Label>
+                  <Label htmlFor="description">Комментарий (необязательно)</Label>
                   <Input
                     id="description"
                     value={transferForm.description}
                     onChange={(e) => setTransferForm({ ...transferForm, description: e.target.value })}
-                    placeholder="За услуги"
+                    placeholder="За обед"
                   />
                 </div>
-                <Button onClick={handleTransfer} className="w-full mt-6 h-11" size="lg">
-                  <Icon name="ArrowRight" size={18} className="mr-2" />
+                <Button onClick={handleTransfer} className="w-full h-12" size="lg">
+                  <Icon name="ArrowRight" size={20} className="mr-2" />
                   Отправить перевод
                 </Button>
               </CardContent>
             </Card>
           </TabsContent>
 
-          <TabsContent value="history" className="space-y-6">
-            <Card className="shadow-lg">
+          <TabsContent value="history">
+            <Card className="border-blue-200">
               <CardHeader>
                 <CardTitle className="flex items-center gap-2">
                   <Icon name="History" size={24} />
                   История операций
                 </CardTitle>
-                <CardDescription>Все ваши транзакции</CardDescription>
+                <CardDescription>Последние {transactions.length} транзакций</CardDescription>
               </CardHeader>
               <CardContent>
                 {transactions.length === 0 ? (
-                  <p className="text-center text-muted-foreground py-8">Нет транзакций</p>
+                  <p className="text-center text-muted-foreground py-8">Нет операций</p>
                 ) : (
                   <div className="space-y-3">
                     {transactions.map((t) => {
                       const isIncoming = t.to_user?.id === user.id;
+                      const otherUser = isIncoming ? t.from_user : t.to_user;
+                      
                       return (
-                        <div key={t.id} className="flex items-center justify-between p-4 border rounded-lg hover:bg-slate-50 transition-colors">
+                        <div key={t.id} className="flex items-center justify-between p-4 rounded-lg border bg-card hover:bg-accent/50 transition-colors">
                           <div className="flex items-center gap-3">
                             <div className={`w-10 h-10 rounded-full flex items-center justify-center ${isIncoming ? 'bg-green-100' : 'bg-red-100'}`}>
-                              <Icon name={isIncoming ? 'ArrowDownLeft' : 'ArrowUpRight'} size={20} className={isIncoming ? 'text-green-600' : 'text-red-600'} />
+                              <Icon 
+                                name={isIncoming ? 'ArrowDown' : 'ArrowUp'} 
+                                size={20} 
+                                className={isIncoming ? 'text-green-600' : 'text-red-600'} 
+                              />
                             </div>
                             <div>
-                              <p className="font-semibold">
-                                {isIncoming ? `От ${t.from_user?.full_name}` : `Для ${t.to_user?.full_name}`}
+                              <p className="font-medium">
+                                {isIncoming ? 'От' : 'К'}: {otherUser?.full_name || 'Неизвестно'}
                               </p>
-                              <p className="text-sm text-muted-foreground">{t.description}</p>
-                              <p className="text-xs text-muted-foreground">{new Date(t.date).toLocaleString('ru-RU')}</p>
+                              <p className="text-sm text-muted-foreground">@{otherUser?.username || 'unknown'}</p>
+                              {t.description && (
+                                <p className="text-xs text-muted-foreground italic">{t.description}</p>
+                              )}
                             </div>
                           </div>
-                          <p className={`text-xl font-bold ${isIncoming ? 'text-green-600' : 'text-red-600'}`}>
-                            {isIncoming ? '+' : '-'}{t.amount.toLocaleString('ru-RU')} ₽
-                          </p>
+                          <div className="text-right">
+                            <p className={`text-lg font-bold ${isIncoming ? 'text-green-600' : 'text-red-600'}`}>
+                              {isIncoming ? '+' : '-'}{t.amount.toLocaleString('ru-RU')} ₽
+                            </p>
+                            <p className="text-xs text-muted-foreground">
+                              {new Date(t.date).toLocaleDateString('ru-RU', { 
+                                day: '2-digit', 
+                                month: '2-digit', 
+                                year: 'numeric',
+                                hour: '2-digit',
+                                minute: '2-digit'
+                              })}
+                            </p>
+                          </div>
                         </div>
                       );
                     })}
                   </div>
                 )}
-              </CardContent>
-            </Card>
-          </TabsContent>
-
-          <TabsContent value="profile" className="space-y-6">
-            <Card className="shadow-lg max-w-2xl mx-auto">
-              <CardHeader>
-                <CardTitle className="flex items-center gap-2">
-                  <Icon name="User" size={24} />
-                  Профиль
-                </CardTitle>
-              </CardHeader>
-              <CardContent className="space-y-4">
-                <div className="space-y-3">
-                  <div className="flex justify-between py-3 border-b">
-                    <span className="text-muted-foreground">Полное имя</span>
-                    <span className="font-semibold">{user.full_name}</span>
-                  </div>
-                  <div className="flex justify-between py-3 border-b">
-                    <span className="text-muted-foreground">Имя пользователя</span>
-                    <span className="font-semibold">@{user.username}</span>
-                  </div>
-                  <div className="flex justify-between py-3 border-b">
-                    <span className="text-muted-foreground">ID пользователя</span>
-                    <span className="font-semibold">#{user.id}</span>
-                  </div>
-                  <div className="flex justify-between py-3">
-                    <span className="text-muted-foreground">Баланс</span>
-                    <span className="font-semibold text-accent">{user.balance.toLocaleString('ru-RU')} ₽</span>
-                  </div>
-                </div>
-                
-                <Separator className="my-6" />
-                
-                <Button onClick={handleLogout} variant="destructive" className="w-full">
-                  <Icon name="LogOut" size={18} className="mr-2" />
-                  Выйти из системы
-                </Button>
               </CardContent>
             </Card>
           </TabsContent>
