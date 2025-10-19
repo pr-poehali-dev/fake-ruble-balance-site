@@ -10,6 +10,7 @@ import { Separator } from '@/components/ui/separator';
 
 const API_AUTH = 'https://functions.poehali.dev/6ad1fc37-5cb5-4c61-9c5b-112b27f741f2';
 const API_TRANSACTIONS = 'https://functions.poehali.dev/68d7f1c1-cfb2-4bc5-916f-806f132dc1d7';
+const API_BALANCE = 'https://functions.poehali.dev/87139c1e-e3ba-42c9-95cb-71bf65f3840b';
 
 interface User {
   id: number;
@@ -101,6 +102,14 @@ const Index = () => {
       const res = await fetch(`${API_TRANSACTIONS}?user_id=${user.id}`);
       const data = await res.json();
       setTransactions(data.transactions || []);
+      
+      const balanceRes = await fetch(`${API_BALANCE}?user_id=${user.id}`);
+      const balanceData = await balanceRes.json();
+      if (balanceData.balance !== undefined) {
+        const updatedUser = { ...user, balance: balanceData.balance };
+        setUser(updatedUser);
+        localStorage.setItem('bank_user', JSON.stringify(updatedUser));
+      }
     } catch (error) {
       console.error('Failed to load transactions');
     }
