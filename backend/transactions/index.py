@@ -6,7 +6,7 @@ Returns: HTTP response with transaction data or history
 
 import json
 import os
-from typing import Dict, Any, List
+from typing import Dict, Any
 from pydantic import BaseModel, Field
 import psycopg2
 from psycopg2.extras import RealDictCursor
@@ -33,9 +33,11 @@ def handler(event: Dict[str, Any], context: Any) -> Dict[str, Any]:
                 'Access-Control-Allow-Headers': 'Content-Type, X-User-Id',
                 'Access-Control-Max-Age': '86400'
             },
-            'body': ''
+            'body': '',
+            'isBase64Encoded': False
         }
     
+    conn = None
     try:
         conn = get_db_connection()
         cur = conn.cursor(cursor_factory=RealDictCursor)
@@ -52,7 +54,7 @@ def handler(event: Dict[str, Any], context: Any) -> Dict[str, Any]:
                     'body': json.dumps({'error': 'user_id required'})
                 }
             
-            cur.execute("""
+            query = f"""
                 SELECT 
                     t.id,
                     t.amount,
@@ -68,10 +70,11 @@ def handler(event: Dict[str, Any], context: Any) -> Dict[str, Any]:
                 FROM transactions t
                 LEFT JOIN users u_from ON t.from_user_id = u_from.id
                 LEFT JOIN users u_to ON t.to_user_id = u_to.id
-                WHERE t.from_user_id = %s OR t.to_user_id = %s
+                WHERE t.from_user_id = {int(user_id)} OR t.to_user_id = {int(user_id)}
                 ORDER BY t.created_at DESC
                 LIMIT 50
-            """, (user_id, user_id))
+            """
+            cur.execute(query)
             
             transactions = cur.fetchall()
             cur.close()
@@ -108,7 +111,7 @@ def handler(event: Dict[str, Any], context: Any) -> Dict[str, Any]:
             body_data = json.loads(event.get('body', '{}'))
             req = TransferRequest(**body_data)
             
-            cur.execute("SELECT id, balance FROM users WHERE id = %s", (req.from_user_id,))
+            cur.execute(f"SELECT id, balance FROM users WHERE id = {req.from_user_id}")
             from_user = cur.fetchone()
             
             if not from_user:
@@ -127,7 +130,8 @@ def handler(event: Dict[str, Any], context: Any) -> Dict[str, Any]:
                     'body': json.dumps({'error': 'Недостаточно средств'})
                 }
             
-            cur.execute("SELECT id FROM users WHERE username = %s", (req.to_username.lower(),))
+            safe_username = req.to_username.lower().replace("'", "''")
+            cur.execute(f"SELECT id FROM users WHERE username = '{safe_username}'")
             to_user = cur.fetchone()
             
             if not to_user:
@@ -146,16 +150,18 @@ def handler(event: Dict[str, Any], context: Any) -> Dict[str, Any]:
                     'body': json.dumps({'error': 'Нельзя переводить самому себе'})
                 }
             
-            cur.execute("UPDATE users SET balance = balance - %s WHERE id = %s", (float(req.amount), req.from_user_id))
-            cur.execute("UPDATE users SET balance = balance + %s WHERE id = %s", (float(req.amount), to_user['id']))
+            amount_val = float(req.amount)
+            safe_desc = req.description.replace("'", "''")
+            
+            cur.execute(f"UPDATE users SET balance = balance - {amount_val} WHERE id = {req.from_user_id}")
+            cur.execute(f"UPDATE users SET balance = balance + {amount_val} WHERE id = {to_user['id']}")
             
             cur.execute(
-                "INSERT INTO transactions (from_user_id, to_user_id, amount, transaction_type, description) VALUES (%s, %s, %s, %s, %s) RETURNING id",
-                (req.from_user_id, to_user['id'], float(req.amount), 'transfer', req.description)
+                f"INSERT INTO transactions (from_user_id, to_user_id, amount, transaction_type, description) VALUES ({req.from_user_id}, {to_user['id']}, {amount_val}, 'transfer', '{safe_desc}') RETURNING id"
             )
             transaction = cur.fetchone()
             
-            cur.execute("SELECT balance FROM users WHERE id = %s", (req.from_user_id,))
+            cur.execute(f"SELECT balance FROM users WHERE id = {req.from_user_id}")
             new_balance = cur.fetchone()
             
             conn.commit()
@@ -183,6 +189,7 @@ def handler(event: Dict[str, Any], context: Any) -> Dict[str, Any]:
     except Exception as e:
         if conn:
             conn.rollback()
+            conn.close()
         return {
             'statusCode': 500,
             'headers': {'Content-Type': 'application/json', 'Access-Control-Allow-Origin': '*'},
